@@ -59,6 +59,16 @@
 
 #define ESP32C3_INTMATRIX_IO_THRESH_REG (0x194 / sizeof(uint32_t))
 
+/**
+ * Status of the interrupt sources, as two 32-bit registers covering the 62
+ * matrix inputs.  These report the level of the inputs, before mapping, and
+ * are how software tells which peripheral raised a CPU line that several
+ * peripherals share.
+ */
+#define ESP32C3_INTMATRIX_IO_STATUS_0_REG (0xf8 / sizeof(uint32_t))
+
+#define ESP32C3_INTMATRIX_IO_STATUS_1_REG (0xfc / sizeof(uint32_t))
+
 
 /* Bit value for the type of interrupt trigger  */
 #define ESP322C3_INTMATRIX_TRIG_LEVEL   0

@@ -123,6 +123,10 @@ static uint64_t esp32c3_intmatrix_read(void* opaque, hwaddr addr, unsigned int s
         r = s->irq_enabled;
     } else if (index == ESP32C3_INTMATRIX_IO_TYPE_REG) {
         r = 0;
+    } else if (index == ESP32C3_INTMATRIX_IO_STATUS_0_REG) {
+        r = (uint32_t) s->irq_levels;
+    } else if (index == ESP32C3_INTMATRIX_IO_STATUS_1_REG) {
+        r = (uint32_t) (s->irq_levels >> 32);
     } else {
 #if INTMATRIX_WARNING
         /* Other registers are not supported yet */
