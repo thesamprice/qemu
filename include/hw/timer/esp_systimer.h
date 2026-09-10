@@ -76,6 +76,15 @@ typedef struct {
     uint64_t flushed; // Mirror of the internal counter that can be seen by the guest program
     /* Absolute time, in ns, when value was updated last */
     int64_t base;
+    /*
+     * Remainder of the ns-to-ticks conversion, in units of 1/CNT_PER_US of a
+     * tick, carried into the next update.  The counter is read far more often
+     * than it ticks -- a guest busy-waiting on it reads it every few tens of
+     * ns, well under the 62.5 ns tick period -- so discarding the truncated
+     * part of each conversion would make the counter run slow in proportion to
+     * how often it is read.
+     */
+    int64_t frac;
 } ESPSysTimerCounter;
 
 

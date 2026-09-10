@@ -33,7 +33,17 @@
 static void esp_systimer_update_counter(ESPSysTimerCounter *counter) {
     const int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     const int64_t elapsed_ns = now - counter->base;
-    const int64_t ticks = (elapsed_ns * (ESP_SYSTIMER_CNT_CLK / 1000000)) / 1000;
+    /*
+     * Carry the remainder of the division rather than dropping it.  One tick is
+     * 62.5 ns, and a guest that busy-waits on this counter reads it far more
+     * often than that, so truncating each conversion independently loses up to
+     * one tick per read and the counter runs slow in proportion to the read
+     * rate.
+     */
+    const int64_t scaled = elapsed_ns * (ESP_SYSTIMER_CNT_CLK / 1000000)
+                         + counter->frac;
+    const int64_t ticks = scaled / 1000;
+    counter->frac = scaled % 1000;
     counter->value = (counter->value + ticks) & ESP_SYSTIMER_52BIT_MASK;
     counter->base = now;
 }
