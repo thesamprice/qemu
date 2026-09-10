@@ -71,8 +71,11 @@ static uint64_t esp32_i2c_read(void * opaque, hwaddr addr, unsigned int size)
         return s->int_ena_reg;
     case A_I2C_INT_ST:
         return s->int_raw_reg & s->int_ena_reg;
-    case A_I2C_CMD ... (A_I2C_CMD + ESP32_I2C_CMD_COUNT * 4):
-        return s->cmd_reg[(addr - A_I2C_CMD) / 4];
+    case A_I2C_CMD ... (A_I2C_CMD + ESP32_I2C_CMD_COUNT * 4 - 1):
+        if ((addr - A_I2C_CMD) / 4 < Esp32_I2C_GET_CLASS(s)->cmd_count) {
+            return s->cmd_reg[(addr - A_I2C_CMD) / 4];
+        }
+        break;
     case A_I2C_TIMEOUT:
         return s->timeout_reg;
     case A_I2C_SDA_HOLD:
@@ -137,8 +140,10 @@ static void esp32_i2c_write(void * opaque, hwaddr addr, uint64_t value, unsigned
         s->int_ena_reg = value;
         esp32_i2c_update_irq(s);
         break;
-    case A_I2C_CMD ... (A_I2C_CMD + ESP32_I2C_CMD_COUNT * 4):
-        s->cmd_reg[(addr - A_I2C_CMD) / 4] = value;
+    case A_I2C_CMD ... (A_I2C_CMD + ESP32_I2C_CMD_COUNT * 4 - 1):
+        if ((addr - A_I2C_CMD) / 4 < Esp32_I2C_GET_CLASS(s)->cmd_count) {
+            s->cmd_reg[(addr - A_I2C_CMD) / 4] = value;
+        }
         break;
     case A_I2C_TIMEOUT:
         s->timeout_reg = value;
@@ -175,9 +180,12 @@ static void esp32_i2c_write(void * opaque, hwaddr addr, uint64_t value, unsigned
 static void esp32_i2c_do_transaction(Esp32I2CState * s)
 {
     bool stop_or_end = false;
-    for (int i_cmd = 0; i_cmd < ESP32_I2C_CMD_COUNT && !stop_or_end; ++i_cmd) {
+    unsigned cmd_count = Esp32_I2C_GET_CLASS(s)->cmd_count;
+
+    for (unsigned i_cmd = 0; i_cmd < cmd_count && !stop_or_end; ++i_cmd) {
         uint32_t cmd = s->cmd_reg[i_cmd];
-        char opcode = FIELD_EX32(cmd, I2C_CMD, OPCODE);
+        uint8_t raw = FIELD_EX32(cmd, I2C_CMD, OPCODE);
+        uint8_t opcode = Esp32_I2C_GET_CLASS(s)->opcodes[raw];
         switch (opcode) {
             case I2C_OPCODE_RSTART:
                 i2c_end_transfer(s->bus);
@@ -232,7 +240,7 @@ static void esp32_i2c_do_transaction(Esp32I2CState * s)
                 stop_or_end = true;
                 break;
             default:
-                error_report("esp32_i2c: Invalid command %d opcode %d", i_cmd, opcode);
+                error_report("esp32_i2c: Invalid command %d opcode %d", i_cmd, raw);
                 break;
         }
         s->cmd_reg[i_cmd] = FIELD_DP32(s->cmd_reg[i_cmd], I2C_CMD, DONE, 1);
@@ -261,10 +269,46 @@ static void esp32_i2c_init(Object * obj)
     fifo8_create(&s->rx_fifo, ESP32_I2C_FIFO_LENGTH);
 }
 
+/*
+ * I2C_CMD.OPCODE, as each chip generation numbers it.
+ *
+ * The original ESP32 numbers the commands 0..4 in protocol order.  The C3 and
+ * the S3 renumber three of them -- RESTART moves from 0 to 6, and READ and
+ * STOP swap -- while the rest of the controller, the register offsets and
+ * every field within them, is unchanged.  A driver written for one and run
+ * against the other therefore does not fail: it sends a valid command that
+ * means something else, which is the reason to model this rather than assume
+ * one table serves both.
+ *
+ * Every entry is spelled out, including the invalid ones.  A designated
+ * initializer would leave the gaps at zero, and zero is RSTART.
+ */
+static const uint8_t esp32_i2c_opcodes[8] = {
+    I2C_OPCODE_RSTART,  I2C_OPCODE_WRITE,   I2C_OPCODE_READ,    I2C_OPCODE_STOP,
+    I2C_OPCODE_END,     I2C_OPCODE_INVALID, I2C_OPCODE_INVALID, I2C_OPCODE_INVALID,
+};
+
+static const uint8_t esp32c3_i2c_opcodes[8] = {
+    I2C_OPCODE_INVALID, I2C_OPCODE_WRITE,   I2C_OPCODE_STOP,    I2C_OPCODE_READ,
+    I2C_OPCODE_END,     I2C_OPCODE_INVALID, I2C_OPCODE_RSTART,  I2C_OPCODE_INVALID,
+};
+
 static void esp32_i2c_class_init(ObjectClass * klass, void * data)
 {
     ResettableClass *rc = RESETTABLE_CLASS(klass);
+    Esp32I2CClass *ic = Esp32_I2C_CLASS(klass);
+
     rc->phases.hold = esp32_i2c_reset_hold;
+    ic->opcodes = esp32_i2c_opcodes;
+    ic->cmd_count = 16;
+}
+
+static void esp32c3_i2c_class_init(ObjectClass * klass, void * data)
+{
+    Esp32I2CClass *ic = Esp32_I2C_CLASS(klass);
+
+    ic->opcodes = esp32c3_i2c_opcodes;
+    ic->cmd_count = 8;
 }
 
 static const TypeInfo esp32_i2c_type_info = {
@@ -273,11 +317,21 @@ static const TypeInfo esp32_i2c_type_info = {
     .instance_size = sizeof(Esp32I2CState),
     .instance_init = esp32_i2c_init,
     .class_init = esp32_i2c_class_init,
+    .class_size = sizeof(Esp32I2CClass),
+};
+
+static const TypeInfo esp32c3_i2c_type_info = {
+    .name = TYPE_ESP32C3_I2C,
+    .parent = TYPE_ESP32_I2C,
+    .instance_size = sizeof(Esp32I2CState),
+    .class_init = esp32c3_i2c_class_init,
+    .class_size = sizeof(Esp32I2CClass),
 };
 
 static void esp32_i2c_register_types(void)
 {
     type_register_static(&esp32_i2c_type_info);
+    type_register_static(&esp32c3_i2c_type_info);
 }
 
 type_init(esp32_i2c_register_types)

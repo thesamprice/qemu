@@ -40,6 +40,7 @@
 #include "hw/timer/esp32c3_timg.h"
 #include "hw/timer/esp32c3_systimer.h"
 #include "hw/ssi/esp32c3_spi.h"
+#include "hw/i2c/esp32_i2c.h"
 #include "hw/misc/esp32c3_rtc_cntl.h"
 #include "hw/misc/esp32c3_aes.h"
 #include "hw/misc/esp32c3_rsa.h"
@@ -73,6 +74,7 @@ struct Esp32C3MachineState {
     ESP32C3IntMatrixState intmatrix;
     ESP32C3UARTState uart[ESP32C3_UART_COUNT];
     ESP32C3GPIOState gpio;
+    Esp32I2CState i2c;
     ESP32C3CacheState cache;
     ESP32C3EfuseState efuse;
     ESP32C3ClockState clock;
@@ -406,6 +408,7 @@ static void esp32c3_machine_init(MachineState *machine)
 
     object_initialize_child(OBJECT(machine), "intmatrix", &ms->intmatrix, TYPE_ESP32C3_INTMATRIX);
     object_initialize_child(OBJECT(machine), "gpio", &ms->gpio, TYPE_ESP32C3_GPIO);
+    object_initialize_child(OBJECT(machine), "i2c", &ms->i2c, TYPE_ESP32C3_I2C);
     object_initialize_child(OBJECT(machine), "extmem", &ms->cache, TYPE_ESP32C3_CACHE);
     object_initialize_child(OBJECT(machine), "efuse", &ms->efuse, TYPE_ESP32C3_EFUSE);
     object_initialize_child(OBJECT(machine), "clock", &ms->clock, TYPE_ESP32C3_CLOCK);
@@ -498,6 +501,15 @@ static void esp32c3_machine_init(MachineState *machine)
                            qdev_get_gpio_in(intmatrix_dev, ETS_GPIO_INTR_SOURCE));
         sysbus_connect_irq(SYS_BUS_DEVICE(&ms->gpio), 1,
                            qdev_get_gpio_in(intmatrix_dev, ETS_GPIO_NMI_SOURCE));
+    }
+
+    /* I2C realization */
+    {
+        sysbus_realize(SYS_BUS_DEVICE(&ms->i2c), &error_fatal);
+        MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ms->i2c), 0);
+        memory_region_add_subregion_overlap(sys_mem, DR_REG_I2C_EXT_BASE, mr, 0);
+        sysbus_connect_irq(SYS_BUS_DEVICE(&ms->i2c), 0,
+                           qdev_get_gpio_in(intmatrix_dev, ETS_I2C_EXT0_INTR_SOURCE));
     }
 
     /* (Extmem) Cache realization */

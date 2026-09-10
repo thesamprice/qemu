@@ -119,4 +119,10 @@ config RISCV_ESP32C3
     select OPENCORES_ETH
     select UNIMP
     select ESP_RGB
+    select I2C
+    # Slaves to put on the I2C bus.  Nothing in the machine instantiates
+    # either; they are here so that -device can, which is what lets a guest
+    # driver be tested against something that answers.
+    select TMP105
+    select AT24C
 

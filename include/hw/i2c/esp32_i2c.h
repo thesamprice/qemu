@@ -8,6 +8,15 @@
 
 #define TYPE_ESP32_I2C "esp32.i2c"
 #define Esp32_I2C(obj) OBJECT_CHECK(Esp32I2CState, (obj), TYPE_ESP32_I2C)
+#define Esp32_I2C_GET_CLASS(obj) \
+    OBJECT_GET_CLASS(Esp32I2CClass, obj, TYPE_ESP32_I2C)
+#define Esp32_I2C_CLASS(klass) \
+    OBJECT_CLASS_CHECK(Esp32I2CClass, klass, TYPE_ESP32_I2C)
+
+/* The C-series parts renumbered the command opcodes; see the opcode maps in
+ * esp32_i2c.c.  Everything else about the controller is the same, so this is a
+ * subclass rather than a device of its own. */
+#define TYPE_ESP32C3_I2C "esp32c3.i2c"
 
 
 #define ESP32_I2C_MEM_SIZE 0x100
@@ -39,6 +48,21 @@ typedef struct Esp32I2CState {
     uint32_t stop_setup_reg;
     uint32_t cmd_reg[ESP32_I2C_CMD_COUNT];
 } Esp32I2CState;
+
+typedef struct Esp32I2CClass {
+    SysBusDeviceClass parent_class;
+
+    /* I2C_CMD.OPCODE as the chip numbers it, mapped to the canonical opcode
+     * the transaction engine switches on.  Indexed by the raw three-bit
+     * field, so it always has eight entries. */
+    const uint8_t *opcodes;
+
+    /* How many command registers the chip has.  The original ESP32 has 16;
+     * the C3 has 8, and real registers of its own where the other 8 would be,
+     * so treating the whole range as commands on that part would both execute
+     * a timeout configuration as a command and lose the configuration. */
+    unsigned cmd_count;
+} Esp32I2CClass;
 
 
 REG32(I2C_CTR, 0x04);
@@ -97,13 +121,17 @@ REG32(I2C_CMD, 0x58);
     FIELD(I2C_CMD, DONE, 31, 1);
 /* 15 more command registers omitted */
 
-/* I2C_CMD.OPCODE values */
+/* Canonical opcodes.  These are what the transaction engine works in; what a
+ * given chip puts in I2C_CMD.OPCODE is mapped to one of these by the class's
+ * opcode table.  The values happen to match the original ESP32's numbering,
+ * which is where they came from. */
 typedef enum {
-    I2C_OPCODE_RSTART = 0,
-    I2C_OPCODE_WRITE  = 1,
-    I2C_OPCODE_READ   = 2,
-    I2C_OPCODE_STOP   = 3,
-    I2C_OPCODE_END    = 4,
+    I2C_OPCODE_RSTART  = 0,
+    I2C_OPCODE_WRITE   = 1,
+    I2C_OPCODE_READ    = 2,
+    I2C_OPCODE_STOP    = 3,
+    I2C_OPCODE_END     = 4,
+    I2C_OPCODE_INVALID = 0xff,
 } i2c_opcode_t;
 
 #endif /* ESP32_I2C_H */
