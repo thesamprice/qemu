@@ -24,4 +24,10 @@ typedef struct Esp32GpioState {
 
 typedef struct Esp32GpioClass {
     SysBusDeviceClass parent_class;
+
+    /* Register map for the MMIO region, which instance_init binds.  A
+     * subclass whose registers differ replaces this in its class_init; it
+     * cannot re-initialize the region itself, because by then the parent has
+     * already created it and handed it to sysbus. */
+    const MemoryRegionOps *ops;
 } Esp32GpioClass;

@@ -41,7 +41,7 @@ static void esp32_gpio_write(void *opaque, hwaddr addr,
 {
 }
 
-static const MemoryRegionOps uart_ops = {
+static const MemoryRegionOps esp32_gpio_ops = {
     .read =  esp32_gpio_read,
     .write = esp32_gpio_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
@@ -63,7 +63,7 @@ static void esp32_gpio_init(Object *obj)
     /* Set the default value for the strap_mode property */
     object_property_set_int(obj, "strap_mode", ESP32_STRAP_MODE_FLASH_BOOT, &error_fatal);
 
-    memory_region_init_io(&s->iomem, obj, &uart_ops, s,
+    memory_region_init_io(&s->iomem, obj, ESP32_GPIO_GET_CLASS(obj)->ops, s,
                           TYPE_ESP32_GPIO, 0x1000);
     sysbus_init_mmio(sbd, &s->iomem);
     sysbus_init_irq(sbd, &s->irq);
@@ -80,7 +80,9 @@ static void esp32_gpio_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     ResettableClass *rc = RESETTABLE_CLASS(klass);
+    Esp32GpioClass *gc = ESP32_GPIO_CLASS(klass);
 
+    gc->ops = &esp32_gpio_ops;
     rc->phases.hold = esp32_gpio_reset_hold;
     dc->realize = esp32_gpio_realize;
     device_class_set_props(dc, esp32_gpio_properties);
