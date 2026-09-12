@@ -114,6 +114,11 @@ typedef struct ESP32C3State {
     uint32_t ext_level;
     uint32_t ext_valid;
 
+    /* Pads tied together on one net, as a board would with a track.  Set with
+     * the "wire" property; zero means every pad is on its own, which is what
+     * a bare chip looks like. */
+    uint32_t wire;
+
     qemu_irq nmi_irq;
     qemu_irq output[ESP32C3_GPIO_PIN_COUNT];
 } ESP32C3GPIOState;

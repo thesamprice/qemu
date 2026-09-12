@@ -134,16 +134,63 @@ static uint32_t esp32c3_gpio_int_ena_mask(ESP32C3GPIOState *s, uint32_t which)
  * a driver test itself with no external wiring -- set a pin, read it back --
  * and it is also why an output toggling can raise this pin's own interrupt.
  */
+/* The pads whose GPIO_PINn.PAD_DRIVER selects open drain. */
+static uint32_t esp32c3_gpio_open_drain(ESP32C3GPIOState *s)
+{
+    uint32_t od = 0;
+
+    for (unsigned i = 0; i < ESP32C3_GPIO_PIN_COUNT; ++i) {
+        if (FIELD_EX32(s->pin[i], GPIO_PIN0, PAD_DRIVER)) {
+            od |= 1u << i;
+        }
+    }
+    return od;
+}
+
 static void esp32c3_gpio_update(ESP32C3GPIOState *s)
 {
-    uint32_t floating = ~s->enable & ESP32C3_GPIO_PIN_MASK;
+    /*
+     * Open drain: the pad can pull low and cannot drive high.  So an enabled
+     * output whose PAD_DRIVER is set only drives when its level is 0; writing
+     * 1 releases the pad, and what the input then reads is whatever else is on
+     * it -- a pull resistor, an external driver, or another pad on the same
+     * net.  A push-pull output drives either way, which is the difference.
+     */
+    uint32_t od = esp32c3_gpio_open_drain(s);
+    uint32_t driving = s->enable & ~(od & s->out) & ESP32C3_GPIO_PIN_MASK;
+    uint32_t floating = ~driving & ESP32C3_GPIO_PIN_MASK;
+    uint32_t pulls = esp32c3_gpio_pull_level(s);
     uint32_t in;
     uint32_t changed;
 
-    in = (s->out & s->enable)
+    in = (s->out & driving)
        | (s->ext_level & s->ext_valid & floating)
-       | (esp32c3_gpio_pull_level(s) & ~s->ext_valid & floating);
+       | (pulls & ~s->ext_valid & floating);
     in &= ESP32C3_GPIO_PIN_MASK;
+
+    /*
+     * Pads tied together on one net, which is what "wire" names.  Real open
+     * drain needs more than one driver on a line before it means anything --
+     * the property being tested is that one holding low wins over another
+     * releasing -- and two pads of one controller are not connected unless
+     * something says they are.  A board says it with a track.
+     *
+     * The net is low if any pad on it is driving low, and otherwise takes the
+     * pull level of the pads on it.  A net with two push-pull outputs
+     * disagreeing is a short, and is left reading low rather than pretending
+     * to resolve it.
+     */
+    if (s->wire != 0) {
+        uint32_t net = s->wire & ESP32C3_GPIO_PIN_MASK;
+
+        if ((driving & net & ~s->out) != 0) {
+            in &= ~net;
+        } else if ((pulls & net) != 0) {
+            in |= net;
+        } else {
+            in &= ~net;
+        }
+    }
 
     changed = in ^ s->in;
     s->in = in;
@@ -428,6 +475,15 @@ static const VMStateDescription vmstate_esp32c3_gpio = {
  * in this class_init function */
 static void esp32c3_gpio_class_init(ObjectClass *klass, void *data)
 {
+    static Property esp32c3_gpio_properties[] = {
+        /*
+         * Which pads share a net.  A test for open drain needs two drivers on
+         * one line, and nothing inside the chip puts them there.
+         */
+        DEFINE_PROP_UINT32("wire", ESP32C3GPIOState, wire, 0),
+        DEFINE_PROP_END_OF_LIST(),
+    };
+
     DeviceClass *dc = DEVICE_CLASS(klass);
     ResettableClass *rc = RESETTABLE_CLASS(klass);
     Esp32GpioClass *gc = ESP32_GPIO_CLASS(klass);
@@ -435,6 +491,7 @@ static void esp32c3_gpio_class_init(ObjectClass *klass, void *data)
     gc->ops = &esp32c3_gpio_ops;
     rc->phases.hold = esp32c3_gpio_reset_hold;
     dc->vmsd = &vmstate_esp32c3_gpio;
+    device_class_set_props(dc, esp32c3_gpio_properties);
 }
 
 static const TypeInfo esp32c3_gpio_info = {
