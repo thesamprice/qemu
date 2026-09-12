@@ -40,6 +40,7 @@
 #include "hw/timer/esp32c3_timg.h"
 #include "hw/timer/esp32c3_systimer.h"
 #include "hw/ssi/esp32c3_spi.h"
+#include "hw/ssi/esp32c3_gpspi.h"
 #include "hw/i2c/esp32_i2c.h"
 #include "hw/misc/esp32c3_rtc_cntl.h"
 #include "hw/misc/esp32c3_aes.h"
@@ -88,6 +89,7 @@ struct Esp32C3MachineState {
     ESP32C3TimgState timg[2];
     ESP32C3SysTimerState systimer;
     ESP32C3SpiState spi1;
+    Esp32C3GpspiState gpspi2;
     ESP32C3RtcCntlState rtccntl;
     ESP32C3UsbJtagState jtag;
     ESPRgbState rgb;
@@ -423,6 +425,7 @@ static void esp32c3_machine_init(MachineState *machine)
     object_initialize_child(OBJECT(machine), "timg1", &ms->timg[1], TYPE_ESP32C3_TIMG);
     object_initialize_child(OBJECT(machine), "systimer", &ms->systimer, TYPE_ESP32C3_SYSTIMER);
     object_initialize_child(OBJECT(machine), "spi1", &ms->spi1, TYPE_ESP32C3_SPI);
+    object_initialize_child(OBJECT(machine), "gpspi2", &ms->gpspi2, TYPE_ESP32C3_GPSPI);
     object_initialize_child(OBJECT(machine), "rtccntl", &ms->rtccntl, TYPE_ESP32C3_RTC_CNTL);
     object_initialize_child(OBJECT(machine), "jtag", &ms->jtag, TYPE_ESP32C3_JTAG);
     object_initialize_child(OBJECT(machine), "rgb", &ms->rgb, TYPE_ESP_RGB);
@@ -477,6 +480,18 @@ static void esp32c3_machine_init(MachineState *machine)
         if (blk) {
             esp32c3_init_spi_flash(ms, blk);
         }
+    }
+
+    /* GPSPI2, the general purpose controller a spi: component would use.
+     * Nothing is attached here: a slave comes from -device on its "spi" bus,
+     * the way the I2C controller takes one. */
+    {
+        sysbus_realize(SYS_BUS_DEVICE(&ms->gpspi2), &error_fatal);
+        MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ms->gpspi2), 0);
+        memory_region_add_subregion_overlap(sys_mem, DR_REG_SPI2_BASE, mr, 0);
+        sysbus_connect_irq(SYS_BUS_DEVICE(&ms->gpspi2), 0,
+                           qdev_get_gpio_in(DEVICE(&ms->intmatrix),
+                                            ETS_SPI2_INTR_SOURCE));
     }
 
     for (int i = 0; i < ESP32C3_UART_COUNT; ++i) {
