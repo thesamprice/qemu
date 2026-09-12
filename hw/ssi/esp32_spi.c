@@ -157,11 +157,19 @@ static void esp32_spi_txrx_buffer(Esp32SpiState *s, void *buf, int tx_bytes, int
     uint8_t *c_buf = (uint8_t*) buf;
     for (int i = 0; i < bytes; ++i) {
         uint8_t byte = 0;
-        if (byte < tx_bytes) {
+        /*
+         * Both bounds are the loop index.  They used to be "byte", which is
+         * the data: the first was therefore evaluated while byte was still 0,
+         * so it read as (0 < tx_bytes) and transmitted past tx_bytes, and the
+         * second decided whether to keep a received byte based on the value of
+         * the byte just sent.  A full duplex transfer whose transmit bytes
+         * were all >= rx_bytes returned the guest its own data.
+         */
+        if (i < tx_bytes) {
             memcpy(&byte, c_buf + i, 1);
         }
         uint32_t res = ssi_transfer(s->spi, byte);
-        if (byte < rx_bytes) {
+        if (i < rx_bytes) {
             memcpy(c_buf + i, &res, 1);
         }
     }
