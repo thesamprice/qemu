@@ -150,6 +150,37 @@ static bool addr_in_range(hwaddr addr, hwaddr start, hwaddr end)
 static uint64_t esp32c3_io_read(void *opaque, hwaddr addr, unsigned int size)
 {
     if (addr_in_range(addr + ESP32C3_IO_START_ADDR, DR_REG_RTC_I2C_BASE, DR_REG_RTC_I2C_BASE + 0x100)) {
+        /*
+         * The RTC I2C controller is how the PHY reaches the RF analog
+         * registers, and libphy polls it in two places that want opposite
+         * things from the same byte, so one constant for the whole window
+         * cannot work:
+         *
+         *   ram_pkdet_vol_start() reads BASE + 0x50 and loops until bits
+         *   26:24 read 7.  Returning 0xffffff leaves that byte zero and the
+         *   loop never ends.
+         *
+         *   rom1_i2c_master_reset() writes bit 26 of BASE + 0x00 and 0x04,
+         *   then loops until bit 25 of the same register CLEARS.  Returning
+         *   all ones leaves it set and that loop never ends.
+         *
+         * Both hang with no fault and no unimplemented-register warning,
+         * because this range is deliberately answered rather than left
+         * unbacked -- which makes them very hard to find from outside.  They
+         * are at different offsets, so answering per offset satisfies both.
+         *
+         * This is still a stub and not a model: there is no analog register
+         * bus behind it, and it reports "idle, done, ready" unconditionally.
+         * A real model belongs with the WiFi work.
+         */
+        const hwaddr off = addr + ESP32C3_IO_START_ADDR - DR_REG_RTC_I2C_BASE;
+
+        if (off == 0x50) {
+            /* Status: bits 26:24 all set, which is what the PHY waits for. */
+            return (uint32_t) 0xffffffff;
+        }
+
+        /* Control: bit 25 clear, so a reset reads back as complete. */
         return (uint32_t) 0xffffff;
     } else if (addr + ESP32C3_IO_START_ADDR == DR_REG_SYSCON_BASE + A_SYSCON_ORIGIN_REG) {
         /* Return "QEMU" as a 32-bit value */
