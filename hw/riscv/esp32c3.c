@@ -49,6 +49,7 @@
 #include "hw/misc/esp32c3_ds.h"
 #include "hw/misc/esp32c3_xts_aes.h"
 #include "hw/misc/esp32c3_jtag.h"
+#include "hw/misc/esp32c3_ana.h"
 #include "hw/dma/esp32c3_gdma.h"
 #include "hw/display/esp_rgb.h"
 #include "hw/net/can/esp32c3_twai.h"
@@ -92,6 +93,7 @@ struct Esp32C3MachineState {
     Esp32C3GpspiState gpspi2;
     ESP32C3RtcCntlState rtccntl;
     ESP32C3UsbJtagState jtag;
+    ESP32C3AnaState ana;
     ESPRgbState rgb;
     Esp32C3TWAIState twai;
 };
@@ -142,47 +144,9 @@ static const struct MemmapEntry {
 };
 
 
-static bool addr_in_range(hwaddr addr, hwaddr start, hwaddr end)
-{
-    return addr >= start && addr < end;
-}
-
 static uint64_t esp32c3_io_read(void *opaque, hwaddr addr, unsigned int size)
 {
-    if (addr_in_range(addr + ESP32C3_IO_START_ADDR, DR_REG_RTC_I2C_BASE, DR_REG_RTC_I2C_BASE + 0x100)) {
-        /*
-         * The RTC I2C controller is how the PHY reaches the RF analog
-         * registers, and libphy polls it in two places that want opposite
-         * things from the same byte, so one constant for the whole window
-         * cannot work:
-         *
-         *   ram_pkdet_vol_start() reads BASE + 0x50 and loops until bits
-         *   26:24 read 7.  Returning 0xffffff leaves that byte zero and the
-         *   loop never ends.
-         *
-         *   rom1_i2c_master_reset() writes bit 26 of BASE + 0x00 and 0x04,
-         *   then loops until bit 25 of the same register CLEARS.  Returning
-         *   all ones leaves it set and that loop never ends.
-         *
-         * Both hang with no fault and no unimplemented-register warning,
-         * because this range is deliberately answered rather than left
-         * unbacked -- which makes them very hard to find from outside.  They
-         * are at different offsets, so answering per offset satisfies both.
-         *
-         * This is still a stub and not a model: there is no analog register
-         * bus behind it, and it reports "idle, done, ready" unconditionally.
-         * A real model belongs with the WiFi work.
-         */
-        const hwaddr off = addr + ESP32C3_IO_START_ADDR - DR_REG_RTC_I2C_BASE;
-
-        if (off == 0x50) {
-            /* Status: bits 26:24 all set, which is what the PHY waits for. */
-            return (uint32_t) 0xffffffff;
-        }
-
-        /* Control: bit 25 clear, so a reset reads back as complete. */
-        return (uint32_t) 0xffffff;
-    } else if (addr + ESP32C3_IO_START_ADDR == DR_REG_SYSCON_BASE + A_SYSCON_ORIGIN_REG) {
+    if (addr + ESP32C3_IO_START_ADDR == DR_REG_SYSCON_BASE + A_SYSCON_ORIGIN_REG) {
         /* Return "QEMU" as a 32-bit value */
         return 0x51454d55;
     } else if (addr + ESP32C3_IO_START_ADDR == DR_REG_SYSCON_BASE + A_SYSCON_RND_DATA_REG) {
@@ -459,6 +423,7 @@ static void esp32c3_machine_init(MachineState *machine)
     object_initialize_child(OBJECT(machine), "gpspi2", &ms->gpspi2, TYPE_ESP32C3_GPSPI);
     object_initialize_child(OBJECT(machine), "rtccntl", &ms->rtccntl, TYPE_ESP32C3_RTC_CNTL);
     object_initialize_child(OBJECT(machine), "jtag", &ms->jtag, TYPE_ESP32C3_JTAG);
+    object_initialize_child(OBJECT(machine), "ana", &ms->ana, TYPE_ESP32C3_ANA);
     object_initialize_child(OBJECT(machine), "rgb", &ms->rgb, TYPE_ESP_RGB);
     object_initialize_child(OBJECT(machine), "twai", &ms->twai, TYPE_ESP32C3_TWAI);
 
@@ -491,6 +456,15 @@ static void esp32c3_machine_init(MachineState *machine)
         MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ms->jtag), 0);
         memory_region_add_subregion_overlap(sys_mem, DR_REG_USB_SERIAL_JTAG_BASE, mr, 0);
     }
+
+    /* RF analog register bus realization.  Overlaps the catch-all I/O region,
+     * which used to answer this window with a constant. */
+    {
+        sysbus_realize(SYS_BUS_DEVICE(&ms->ana), &error_fatal);
+        MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ms->ana), 0);
+        memory_region_add_subregion_overlap(sys_mem, DR_REG_RTC_I2C_BASE, mr, 0);
+    }
+
 
     /* RTC CNTL realization */
     {
