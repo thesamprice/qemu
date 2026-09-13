@@ -51,6 +51,7 @@
 #include "hw/misc/esp32c3_jtag.h"
 #include "hw/misc/esp32c3_ana.h"
 #include "hw/misc/esp32c3_fe.h"
+#include "hw/misc/esp32c3_wifi.h"
 #include "hw/dma/esp32c3_gdma.h"
 #include "hw/display/esp_rgb.h"
 #include "hw/net/can/esp32c3_twai.h"
@@ -96,6 +97,7 @@ struct Esp32C3MachineState {
     ESP32C3UsbJtagState jtag;
     ESP32C3AnaState ana;
     ESP32C3FeState fe;
+    ESP32C3WifiState wifi;
     ESPRgbState rgb;
     Esp32C3TWAIState twai;
 };
@@ -427,6 +429,7 @@ static void esp32c3_machine_init(MachineState *machine)
     object_initialize_child(OBJECT(machine), "jtag", &ms->jtag, TYPE_ESP32C3_JTAG);
     object_initialize_child(OBJECT(machine), "ana", &ms->ana, TYPE_ESP32C3_ANA);
     object_initialize_child(OBJECT(machine), "fe", &ms->fe, TYPE_ESP32C3_FE);
+    object_initialize_child(OBJECT(machine), "wifi", &ms->wifi, TYPE_ESP32C3_WIFI);
     object_initialize_child(OBJECT(machine), "rgb", &ms->rgb, TYPE_ESP_RGB);
     object_initialize_child(OBJECT(machine), "twai", &ms->twai, TYPE_ESP32C3_TWAI);
 
@@ -473,6 +476,13 @@ static void esp32c3_machine_init(MachineState *machine)
         sysbus_realize(SYS_BUS_DEVICE(&ms->fe), &error_fatal);
         MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ms->fe), 0);
         memory_region_add_subregion_overlap(sys_mem, DR_REG_FE_BASE, mr, 0);
+    }
+
+    /* WiFi MAC realization */
+    {
+        sysbus_realize(SYS_BUS_DEVICE(&ms->wifi), &error_fatal);
+        MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ms->wifi), 0);
+        memory_region_add_subregion_overlap(sys_mem, DR_REG_WIFI_MAC_BASE, mr, 0);
     }
 
     /* RTC CNTL realization */
