@@ -483,6 +483,13 @@ static void esp32c3_machine_init(MachineState *machine)
         sysbus_realize(SYS_BUS_DEVICE(&ms->wifi), &error_fatal);
         MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ms->wifi), 0);
         memory_region_add_subregion_overlap(sys_mem, DR_REG_WIFI_MAC_BASE, mr, 0);
+
+        /* Peripheral source 0.  esp32c3_init_openeth() claims the same source,
+         * but only when the command line asks for an open_eth netdev, and a
+         * machine with both an Ethernet controller and a radio on one line is
+         * not a C3. */
+        sysbus_connect_irq(SYS_BUS_DEVICE(&ms->wifi), 0,
+                           qdev_get_gpio_in(intmatrix_dev, ETS_WIFI_MAC_INTR_SOURCE));
     }
 
     /* RTC CNTL realization */
