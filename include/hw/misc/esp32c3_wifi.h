@@ -47,6 +47,37 @@
 #define A_WIFI_DSCR_HIGH            0x0c64  /* the top 12 bits of the above  */
 
 /*
+ * The transmit path, found the same way.  hal_mac_txq_enable() is five
+ * instructions and computes its register as (0x0c0067a1 - q) << 3, which is
+ * 0x60033d08 - 8q; hal_mac_is_txq_enabled() reads bit 31 of it and
+ * hal_mac_is_txq_valid() bit 30, and hal_mac_set_txq_invalid() clears bit 30
+ * alone.  The low twenty bits are the address of the descriptor list, in the
+ * same split as the receive side: the top twelve come from A_WIFI_DSCR_HIGH.
+ * hal_mac_tx_config_edca() puts the queue's parameters in the word below.
+ */
+#define ESP32C3_WIFI_TX_QUEUES      5
+#define A_WIFI_TX_PLCP0(q)          (0x0d08 - 8 * (q))
+#define WIFI_TX_PLCP0_ADDR          0x000fffff
+#define WIFI_TX_PLCP0_VALID         BIT(30)
+#define WIFI_TX_PLCP0_ENABLE        BIT(31)
+
+/*
+ * Which queue the transmit-complete interrupt was about.
+ *
+ * hal_mac_get_txq_state() and hal_mac_clr_txq_state() each take a kind and
+ * have three arms, at three pairs of registers.  It is kind 2 that
+ * lmacPostTxComplete reads -- 0x0cb0 is the only one of the six the guest
+ * touches after a transmit -- and it is a bitmap of four queues, cleared by
+ * writing the bits into the separate register below it rather than back into
+ * itself.  So the two are separate here as they are in silicon: a
+ * write-one-to-clear on one word would answer reads with what was last
+ * retired instead of with what is outstanding.
+ */
+#define A_WIFI_TXQ_STATE_CLR        0x0cac  /* hal_mac_clr_txq_state( 2, .. ) */
+#define A_WIFI_TXQ_STATE            0x0cb0  /* hal_mac_get_txq_state( 2 )     */
+#define WIFI_TXQ_STATE_MASK         0x0000000f
+
+/*
  * The event bits, as wDev_ProcessFiq tests them: it masks the word from
  * hal_mac_interrupt_get_event() against each in turn and calls the matching
  * handler.  RX_SUC_DATA is the one that reaches lmacProcessRxSucData.
@@ -85,16 +116,53 @@
 #define A_WIFI_STA_ADDR_LOW         0x0040
 #define A_WIFI_STA_ADDR_HIGH        0x0044
 
+/*
+ * The simulated access point.  It gets as far as association and no further:
+ * the network it advertises is WPA2-PSK, because this image will not look at
+ * an open one, and the four-way handshake behind that is not modelled.
+ */
+typedef enum {
+    ESP32C3_AP_IDLE,
+    ESP32C3_AP_AUTHENTICATED,
+    ESP32C3_AP_ASSOCIATED
+} ESP32C3WifiApState;
+
+/* One frame waiting to be handed to the station, on the queue below. */
+typedef struct ESP32C3WifiFrame {
+    struct ESP32C3WifiFrame *next;
+    uint16_t len;
+    uint8_t  data[1600];
+} ESP32C3WifiFrame;
+
 typedef struct ESP32C3WifiState {
     SysBusDevice parent_object;
     MemoryRegion iomem;
     qemu_irq irq;
     uint32_t mem[ESP32C3_WIFI_REGS_SIZE / sizeof(uint32_t)];
 
-    /* The MAC-driven half of the interrupt register, and the descriptor the
-     * next frame is written into.  Neither is storage. */
+    /* The MAC-driven half of the interrupt register, the queue-complete
+     * bitmap, and the descriptor the next frame is written into.  None of the
+     * three is storage. */
     uint32_t int_status;
+    uint32_t txq_state;
     uint32_t rx_dscr_next;
+
+    /* The access point.  ssid and channel are properties. */
+    char              *ssid;
+    uint32_t           channel;
+    bool               privacy;
+    bool               rsn;
+    uint8_t            bssid[6];
+    ESP32C3WifiApState ap_state;
+    uint32_t           sta_channel;   /* where the station last said it was */
+    uint16_t           seq;
+    QEMUTimer         *beacon_timer;
+    QEMUTimer         *deauth_timer;
+
+    /* Frames the access point owes the station, oldest first. */
+    ESP32C3WifiFrame  *rx_head;
+    ESP32C3WifiFrame  *rx_tail;
+    QEMUTimer         *rx_timer;
 
     /* See esp32c3_wifi_inject(); the first two are properties. */
     uint32_t   inject_frames;
